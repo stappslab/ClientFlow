@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {firebaseConfiguration} from '../src/firebase-config.ts';
+test('Missing configuration uses only non-production demo identifiers',()=>{assert.equal(firebaseConfiguration({}).projectId,'demo-clientflow');assert.equal(firebaseConfiguration({}).apiKey,'demo-only-key');});
+test('Emulators use a demo project and no production API key',()=>{const config=firebaseConfiguration({VITE_EMULATORS:'true',VITE_FIREBASE_PROJECT_ID:'live-project'});assert.equal(config.projectId,'demo-clientflow');assert.equal(config.apiKey,'demo-only-key');});
+test('Incomplete staging configuration never falls back to production',()=>{assert.throws(()=>firebaseConfiguration({VITE_FIREBASE_PROJECT_ID:'clientflow-staging'}),/Incomplete Firebase configuration/);});
+test('Complete staging configuration keeps all services in the staging project',()=>{const config=firebaseConfiguration({VITE_FIREBASE_API_KEY:'staging-key',VITE_FIREBASE_AUTH_DOMAIN:'clientflow-staging.firebaseapp.com',VITE_FIREBASE_PROJECT_ID:'clientflow-staging',VITE_FIREBASE_STORAGE_BUCKET:'clientflow-staging.firebasestorage.app',VITE_FIREBASE_MESSAGING_SENDER_ID:'12345',VITE_FIREBASE_APP_ID:'staging-app'});assert.equal(config.projectId,'clientflow-staging');assert.equal(config.apiKey,'staging-key');assert.ok(!Object.values(config).some(value=>value.includes('demo-clientflow')));});

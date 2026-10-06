@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function owns(uid) { return request.auth != null && request.auth.uid == uid; }
+    function member(uid,projectId) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid)/memberships/$(uid + '_' + projectId));
+    }
+    function account(uid) { return get(/databases/$(database)/documents/accounts/$(uid)).data; }
+    function nextAccount(uid) { return getAfter(/databases/$(database)/documents/accounts/$(uid)).data; }
+    function validAccount(uid) {
+      let d = request.resource.data;
+      return d.keys().hasAll(['plan', 'revision', 'activeProjectId', 'notifications'])
+        && d.keys().hasOnly(['plan', 'revision', 'activeProjectId', 'notifications'])
+        && d.plan in ['free', 'pro'] && d.revision is int
+        && d.activeProjectId is string && d.notifications is list
+        && (d.activeProjectId == '' || getAfter(/databases/$(database)/documents/accounts/$(uid)/projects/$(d.activeProjectId)).data.status == 'active');
+    }
+    function previousSlotClosed(uid) {
+      let previous = resource.data.activeProjectId;
+      return resource.data.plan == 'pro' || previous == ''
+        || previous == request.resource.data.activeProjectId
+        || getAfter(/databases/$(database)/documents/accounts/$(uid)/projects/$(previous)).data.status != 'active';
+    }
+    match /accounts/{uid} {
+      allow read: if owns(uid);
+      allow create: if owns(uid) && validAccount(uid)
+        && request.resource.data.plan == 'free' && request.resource.data.revision == 1;
+      allow update: if owns(uid) && resource.data.get('schema',2) != 3 && validAccount(uid)
+        && !exists(/databases/$(database)/documents/workspaceMigrationLocks/$(uid))
+        && request.resource.data.plan == resource.data.plan
+        && request.resource.data.revision == resource.data.revision + 1
+        && previousSlotClosed(uid);
+      allow delete: if false;
+      match /projects/{projectId} {
+        function validProject() {
+          let d = request.resource.data;
+          return d.keys().hasAll(['id','name','description','status','created','columns','tasks','members','sprints','comments','suggestions','guestComments'])
+            && d.keys().hasOnly(['id','name','description','status','created','columns','tasks','members','sprints','comments','suggestions','guestComments','frozen','revision','taskSequence','branding'])
+            && d.id == projectId && d.name is string && d.name.size() > 0 && d.name.size() <= 100
+            && d.description is string && d.status in ['active','completed','archived']
+            && d.created is number && d.columns is list && d.columns.size() > 0
+            && d.tasks is list && d.members is list && d.sprints is list
+            && d.comments is list && d.suggestions is list && d.guestComments is bool
+            && (nextAccount(uid).plan == 'pro' || d.members.size() <= 5)
+            && (d.status != 'active' || nextAccount(uid).plan == 'pro' || nextAccount(uid).activeProjectId == projectId);
+        }
+        function revisionAdvanced() {
+          return nextAccount(uid).revision == account(uid).revision + 1;
+        }
+        function canEditExisting() {
+          return (resource.data.status == 'active' && (account(uid).plan == 'pro' || account(uid).activeProjectId == projectId))
+            || (resource.data.status != 'active'
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']));
+        }
+        allow read: if owns(uid) || member(uid,projectId);
+        allow create: if owns(uid) && validProject()
+          && !exists(/databases/$(database)/documents/workspaceMigrationLocks/$(uid))
+          && ((!exists(/databases/$(database)/documents/accounts/$(uid)) && nextAccount(uid).revision == 1)
+            || revisionAdvanced());
+        allow update: if owns(uid) && resource.data.get('schema',2) != 3
+          && !exists(/databases/$(database)/documents/migrationLocks/$(uid + '_' + projectId))
+          && validProject() && revisionAdvanced()
+          && request.resource.data.created == resource.data.created && canEditExisting();
+        allow delete: if false;
+        match /{kind}/{entityId} {
+          allow read: if kind in ['tasks','comments','suggestions'] && (owns(uid) || member(uid,projectId));
+          allow write: if false;
+        }
+      }
+      match /notifications/{notificationId} { allow read: if owns(uid); allow write: if false; }
+      match /migrationBackups/{projectId} { allow read: if owns(uid); allow write: if false; }
+    }
+    match /users/{uid}/memberships/{membershipId} { allow read: if owns(uid); allow write: if false; }
+    match /publicProjects/{document=**} { allow read, write: if false; }
+    match /portalTokens/{document=**} { allow read, write: if false; }
+    match /invitations/{document=**} { allow read, write: if false; }
+  }
+}

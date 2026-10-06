@@ -1,0 +1,10 @@
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import AuthGate from './AuthGate';
+import '../styles.css';
+import './ui.css';
+import './auth.css';
+import './improvements.css';
+import {initializeMeasurements} from './telemetry';
+initializeMeasurements();
+createRoot(document.getElementById('root')!).render(<React.StrictMode><AuthGate/></React.StrictMode>);

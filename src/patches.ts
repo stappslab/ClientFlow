@@ -1,0 +1,8 @@
+import type {Project,Task,Comment,Suggestion} from './domain.ts';
+export interface EntityChange<T> {id:string;before:T|null;after:T}
+export interface ProjectPatch {metadata:Partial<Project>;revision:number;tasks:EntityChange<Task>[];comments:EntityChange<Comment>[];suggestions:EntityChange<Suggestion>[]}
+const collections=['tasks','comments','suggestions'] as const;
+const omit=['tasks','comments','suggestions','loaded','counts','publicColumnCounts','ownerId','schema','revision','taskSequence'] as const;
+export function metadata(p:Project):Partial<Project> {const m={...p};for(const k of omit)delete m[k];return m;}
+export function projectPatch(before:Project|undefined,after:Project):ProjectPatch {const patch:ProjectPatch={metadata:{},revision:before?.revision||0,tasks:[],comments:[],suggestions:[]};const previous=before?metadata(before):{};for(const [key,value] of Object.entries(metadata(after)))if(JSON.stringify(value)!==JSON.stringify((previous as Record<string,unknown>)[key]))(patch.metadata as Record<string,unknown>)[key]=value;for(const key of collections){for(const item of after[key]){const old=before?.[key].find(x=>x.id===item.id);if(JSON.stringify(old)!==JSON.stringify(item))(patch[key] as EntityChange<typeof item>[]).push({id:item.id,before:old||null,after:item});}if(before?.[key].some(x=>!after[key].some(y=>x.id===y.id)))throw Error('Use archive or trash instead of permanently removing content.');}return patch;}
+export function rankBetween(previous?:number,next?:number):number {if(previous===undefined)return next===undefined?1024:next-1024;if(next===undefined)return previous+1024;return previous+(next-previous)/2;}

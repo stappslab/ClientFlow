@@ -1,0 +1,14 @@
+import {chromium} from '@playwright/test';
+import assert from 'node:assert/strict';
+import {writeFile} from 'node:fs/promises';
+import {templateProject} from '../src/domain.ts';
+const browser=await chromium.launch({headless:true,channel:'chromium'}),results=[];
+try{for(const count of [100,1000]){
+ const project=templateProject(`Performance ${count}`,'website'),sample=project.tasks[0];project.tasks=Array.from({length:count},(_,i)=>({...sample,id:`task-${i}`,number:i+1,rank:(i+1)*1024,title:`Task ${i+1}`,column:project.columns[i%5].id}));project.taskSequence=count;
+ const page=await browser.newPage({viewport:{width:1440,height:900}});
+ await page.addInitScript(store=>{localStorage.setItem('clientflow.react.v2',JSON.stringify(store));window.__longTasks=[];new PerformanceObserver(list=>window.__longTasks.push(...list.getEntries().map(e=>e.duration))).observe({type:'longtask',buffered:true});},{version:2,plan:'free',projects:[project],notifications:[]});
+ await page.goto('http://127.0.0.1:5173');const start=Date.now();await page.getByRole('button',{name:'Open local demo',exact:true}).click();await page.getByRole('heading',{name:`Performance ${count}`,exact:true}).waitFor();await page.locator('.task').first().waitFor();const openMs=Date.now()-start;
+ const cardCount=await page.locator('.task').count();const editStart=Date.now();await page.getByRole('button',{name:'New task',exact:true}).click();await page.getByLabel('Title',{exact:true}).fill('Measured task');await page.getByRole('button',{name:'Save task',exact:true}).click();await page.waitForFunction(()=>JSON.parse(localStorage.getItem('clientflow.react.v2')).projects[0].tasks.some(t=>t.title==='Measured task'));const createMs=Date.now()-editStart;
+ const searchStart=Date.now();await page.getByRole('textbox',{name:'Search tasks'}).fill('Task 99');await page.waitForFunction(()=>document.querySelectorAll('.task').length<20);const searchMs=Date.now()-searchStart;assert.ok(searchMs<2000,'Search exceeded the local regression budget');assert.ok(createMs<4000,'Create exceeded the local regression budget');
+ results.push({tasks:count,renderedCards:cardCount,openMs,createMs,searchMs,longTasks:await page.evaluate(()=>window.__longTasks)});await page.getByRole('textbox',{name:'Search tasks'}).fill('');await page.screenshot({path:`test-results/board-${count}.png`});await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);await page.screenshot({path:`test-results/board-${count}-mobile.png`});await page.close();
+}await writeFile('test-results/performance.json',JSON.stringify({at:new Date().toISOString(),environment:'Local Chromium / development build; not a production latency guarantee',results},null,2));console.log(JSON.stringify(results));}finally{await browser.close();}
